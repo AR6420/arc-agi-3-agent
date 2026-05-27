@@ -1,0 +1,14 @@
+{
+  "id": "adarshreddyb/arc-agi-3-s1-plumbing",
+  "title": "ARC-AGI-3 S1 plumbing",
+  "code_file": "s1_submission.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "dataset_sources": [],
+  "competition_sources": ["arc-prize-2026-arc-agi-3"],
+  "kernel_sources": []
+}

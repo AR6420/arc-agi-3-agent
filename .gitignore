@@ -1,0 +1,62 @@
+# Credentials / secrets — never commit
+.mcp.json
+.env
+.env.local
+.kaggle/
+kaggle.json
+
+# Python venv + cache
+.venv*/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Bundled Kaggle competition dataset — large, regenerable from Kaggle MCP / CLI
+arc-prize-2026-arc-agi-3/
+
+# Human-replay data — large, regenerable from the original Google-Drive ZIP
+data/human_replays/
+
+# Generated NPZ datasets — regenerable from scripts/data_prep/replay_parser_v3.py
+data/bc_transitions*.npz
+data/bc_transitions*_meta.json
+data/synth_rollouts/
+
+# Weights / training runs / harness runs — large, regenerable
+weights/
+runs/
+harness_runs/
+submissions/*.json
+
+# Scratch / temp
+.tmp_*
+*.log
+logs.log
+.tmp_recordings/
+recordings/
+
+# Validation scratch outputs (research artifacts, regenerable)
+scripts/validation/.kaggle_*
+scripts/validation/.smoke_*
+scripts/validation/.engine_*
+scripts/validation/.env_*
+scripts/validation/.replay_*
+scripts/validation/.toy_*
+scripts/validation/.lb_*
+scripts/validation/.visibility_*
+scripts/validation/lb_full/
+scripts/validation/arc-prize-2026-arc-agi-3.zip
+scripts/validation/.s1_initial_stdout.txt
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
