@@ -40,30 +40,38 @@ class ResBlock(nn.Module):
 
 
 class Backbone(nn.Module):
+    """Phase 2.5: scaled to ~3M params total (was ~560K).
+
+    Channel ladder [64, 128, 192, 256] with double-block stages 2 and 3.
+    Output: (B, 256, 16, 16).
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.stem = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1, bias=False),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(3, 64, 3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
         )
-        self.b1 = ResBlock(32, 32, stride=1)        # 64x64
-        self.b2 = ResBlock(32, 64, stride=2)        # 32x32
-        self.b3 = ResBlock(64, 64, stride=2)        # 16x16
-        self.b4 = ResBlock(64, 128, stride=1)       # 16x16
-        self.out_channels = 128
+        self.b1 = ResBlock(64, 64, stride=1)         # 64x64
+        self.b2a = ResBlock(64, 128, stride=2)       # 32x32
+        self.b2b = ResBlock(128, 128, stride=1)
+        self.b3a = ResBlock(128, 192, stride=2)      # 16x16
+        self.b3b = ResBlock(192, 192, stride=1)
+        self.b4 = ResBlock(192, 256, stride=1)       # 16x16
+        self.out_channels = 256
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.stem(x)
         x = self.b1(x)
-        x = self.b2(x)
-        x = self.b3(x)
+        x = self.b2a(x); x = self.b2b(x)
+        x = self.b3a(x); x = self.b3b(x)
         x = self.b4(x)
-        return x  # (B, 128, 16, 16)
+        return x  # (B, 256, 16, 16)
 
 
 class ActionTypeHead(nn.Module):
-    def __init__(self, feat_dim: int = 128, n_actions: int = 8) -> None:
+    def __init__(self, feat_dim: int = 256, n_actions: int = 8) -> None:
         super().__init__()
         self.fc = nn.Linear(feat_dim, n_actions)
 
@@ -72,21 +80,21 @@ class ActionTypeHead(nn.Module):
 
 
 class SpatialHead(nn.Module):
-    """Upsamples (B, 128, 16, 16) → (B, 1, 64, 64) logits."""
+    """Upsamples (B, C_in, 16, 16) → (B, 1, 64, 64) logits."""
 
-    def __init__(self, c_in: int = 128) -> None:
+    def __init__(self, c_in: int = 256) -> None:
         super().__init__()
         self.up1 = nn.Sequential(
-            nn.ConvTranspose2d(c_in, 64, 4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
+            nn.ConvTranspose2d(c_in, 128, 4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
         )
         self.up2 = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
-            nn.BatchNorm2d(32),
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
         )
-        self.head = nn.Conv2d(32, 1, 1)
+        self.head = nn.Conv2d(64, 1, 1)
 
     def forward(self, feat: torch.Tensor) -> torch.Tensor:
         x = self.up1(feat)
@@ -97,7 +105,7 @@ class SpatialHead(nn.Module):
 class FrameChangeHead(nn.Module):
     """Teacher-forced action input during training (Stage 2 fine-tunes on synth)."""
 
-    def __init__(self, feat_dim: int = 128, n_actions: int = 8) -> None:
+    def __init__(self, feat_dim: int = 256, n_actions: int = 8) -> None:
         super().__init__()
         self.fc1 = nn.Linear(feat_dim + n_actions, 64)
         self.fc2 = nn.Linear(64, 1)

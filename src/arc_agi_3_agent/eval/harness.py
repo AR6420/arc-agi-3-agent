@@ -51,7 +51,9 @@ GATE_HOLDOUT_THRESHOLD = 10.0  # CLAUDE.md §1.2
 # Path to bundled Kaggle env files (mirrored locally for OFFLINE dev).
 DEFAULT_ENV_DIR = r"C:\Users\adars\Downloads\ARC-AGI-3\arc-prize-2026-arc-agi-3\environment_files"
 
-EARLY_EXIT_LEVEL1_ACTION_BUDGET = 50  # Phase 0c §2.5 — skip if level 1 not reached in 50 actions
+EARLY_EXIT_LEVEL1_ACTION_BUDGET = 50  # Phase 0c §2.5 — legacy; replaced by per-env threshold (Phase 2.5)
+EARLY_EXIT_LEVEL1_FLOOR = 150         # Phase 2.5 — minimum action budget before declaring level-1 unreached
+EARLY_EXIT_PROGRESS_WINDOW = 40       # Phase 2.5 — exit if no new frame-hash within this window AND no level advance
 
 
 def _get_arcade(env_dir: str):
@@ -119,6 +121,10 @@ def run_one_env(
     avail = list(obs.available_actions or [])
     agent.reset_for_env(env_id, avail, run_id=run_id)
 
+    # Phase 2.5 — per-env early-exit budget: max(floor, 3 * level1 baseline)
+    level1_baseline = baseline_actions[0] if baseline_actions else 50
+    level1_exit_budget = max(EARLY_EXIT_LEVEL1_FLOOR, 3 * level1_baseline)
+
     action_hist: Counter[int] = Counter()
     latencies: list[float] = []
     level_actions = [0] * n_levels
@@ -126,6 +132,11 @@ def run_one_env(
     actions_taken = 0
     resets_taken = 0
     early_exit_reason: str | None = None
+    # Phase 2.5 progress-based exit: track distinct frame hashes; if no new state
+    # AND no level advance for EARLY_EXIT_PROGRESS_WINDOW actions, exit early.
+    seen_hashes: set[int] = set()
+    last_new_state_step = 0
+    last_level_advance_step = 0
 
     t_start = time.perf_counter()
     while actions_taken < max_actions:
@@ -158,6 +169,14 @@ def run_one_env(
         if cur_level > levels_completed_seen:
             # Just completed a level — record the transition.
             levels_completed_seen = cur_level
+            last_level_advance_step = actions_taken
+
+        # Phase 2.5 — progress tracking via post-action frame[-1] hash.
+        post_frame = _frame_last(obs.frame)
+        h = hash(post_frame.tobytes())
+        if h not in seen_hashes:
+            seen_hashes.add(h)
+            last_new_state_step = actions_taken
 
         # Per-step log line (Phase 1 Issues 2 + 3 — but OFFLINE counters are zero per S5)
         log_fh.write(json.dumps({
@@ -169,9 +188,18 @@ def run_one_env(
             "frame_T": len(obs.frame) if isinstance(obs.frame, list) else 1,
         }) + "\n")
 
-        # Phase 0c §2.5 — skip if level 1 not reached after 50 actions (no path to learning more).
-        if levels_completed_seen == 0 and actions_taken >= EARLY_EXIT_LEVEL1_ACTION_BUDGET:
-            early_exit_reason = f"level 1 not reached in {EARLY_EXIT_LEVEL1_ACTION_BUDGET} actions"
+        # Phase 2.5 — per-env level-1 budget (replaces old 50-action global cap).
+        if levels_completed_seen == 0 and actions_taken >= level1_exit_budget:
+            early_exit_reason = f"level 1 not reached in {level1_exit_budget} actions"
+            break
+
+        # Phase 2.5 — progress-based exit: stuck if no new state AND no level advance.
+        steps_since_progress = actions_taken - max(last_new_state_step, last_level_advance_step)
+        if steps_since_progress >= EARLY_EXIT_PROGRESS_WINDOW and actions_taken >= EARLY_EXIT_PROGRESS_WINDOW:
+            early_exit_reason = (
+                f"no progress (no new state + no level advance) for "
+                f"{EARLY_EXIT_PROGRESS_WINDOW} actions at step {actions_taken}"
+            )
             break
 
     wall = time.perf_counter() - t_start
