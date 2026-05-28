@@ -1,0 +1,15 @@
+stage: 2
+phase_a:
+  epochs: 10
+  data: synth_only
+phase_b:
+  epochs: 5
+  data: combined
+batch_size: 128
+optimizer:
+  name: adamw
+  lr: 1.0e-4
+freeze_backbone: true
+target_auc: 0.75
+halt_below_auc: 0.65
+seed: 0

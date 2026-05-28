@@ -1,0 +1,16 @@
+stage: 1
+epochs: 50
+batch_size: 128
+optimizer:
+  name: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+scheduler:
+  name: cosine
+  warmup_steps: 500
+loss_weights:
+  w_spatial: 0.3
+  w_framechange: 0.1
+val_fraction: 0.10
+checkpoint_every: 5
+seed: 0
