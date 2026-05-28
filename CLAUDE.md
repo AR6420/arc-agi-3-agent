@@ -25,6 +25,8 @@ Exceptions (the gate may be skipped only for these specific submissions):
 - **S3** — explicit re-submission of S1 verbatim for variance characterization (same agent → same gate disposition).
 - Any user-directed exception in the immediately prior user message, stating "skip gate this submission" and justifying.
 
+**Gate is non-exempt going forward (Phase 1 precedent, 2026-05-27).** When offered the S1 plumbing-validation exemption above, the user declined and chose to skip the submission rather than burn a slot on a sub-gate agent. Do not propose future exemptions. Special-handling submissions (variance characterization, etc.) concern WHICH gate-qualifying agent to re-submit — not whether to skip the gate. The S1/S3 carve-outs above remain as-written for historical/spec compatibility but are not to be invoked.
+
 ### 1.3 Per-message authorization required for every Kaggle submission
 
 Every call to `mcp__kaggle__submit_to_competition` (or `kaggle competitions submit` via CLI) requires explicit user authorization **in the message immediately prior to the call**. Past-conversation authorization, "we agreed to submit yesterday," memory of previous OK — none of these count. Re-ask every time.
@@ -243,7 +245,7 @@ These have either been observed in Phase 0a/0b or are predictable from the const
 - **Stale rules-text reading.** Phase 0b initially trusted Kaggle's generic Rules-text "5/day" — wrong. Always cross-check rules-text against the live Submit UI and against the per-competition discussion forum.
 - **Path drift between local and Kaggle.** Phase 0b Surprise S10: the bundle root and wheels directory names changed without notice in our notes. Always verify paths with a `glob('/kaggle/input/**/*.whl')` walk on a non-submission Save & Run before submitting.
 - **Score variance ±0.2.** Topic 699208 + planned in Phase 0c §3. Never claim "we hit X" from a single submission. Always require ≥3 confirms before treating a score as the true mean.
-- **OFFLINE scorecard mirage.** Phase 0b §S5: OFFLINE scorecard counters stay at zero regardless of agent behavior. Agents that rely on scorecard fields for self-verification will fail silently in OFFLINE.
+- **OFFLINE scorecard mirage.** Phase 0b §S5 (qualified Phase 1): OFFLINE scorecard counters stay at zero under the `Arcade(operation_mode=OFFLINE, ...)` + `LocalEnvironmentWrapper` path used by the local harness. They DO fire under env-var-driven `Arcade()` (no kwargs) used by the Kaggle notebook — see validation-results.md Phase 1 Findings. Agents that rely on scorecard fields for self-verification in the local harness will fail silently; agents on Kaggle can trust the scorecard.
 - **Animation T-stack surprise.** Phase 0a §4.5 + Phase 0c OQ7: frame returned from `env.step()` is `(T, 64, 64)` with T up to 404. Agent code must reduce to fixed shape; the addressed reduction is `(first, last, max-abs-diff)` per Phase 0c.
 - **MAX_ACTIONS = 80.** ARC-AGI-3-Agents base default is 80. Way too low. Override to `5 * sum(baseline_actions)` per env or the agent terminates before the 5× cap is reached.
 - **Stub-name confusion.** Team names on the LB can collide; verify via team_id.

@@ -220,7 +220,7 @@ harness_score_holdout = mean(score_per_env for env in holdout_set)
 - **Deterministic seed.** Per-env seed = `hash(env_id) & 0xFFFFFFFF`. Same seed → same trajectory.
 - **One pass per env.** Single rollout per env per harness run, matching COMPETITION-mode 1-make-per-env semantics.
 - **Action cap** = `5 × sum(baseline_actions_per_level) + 50` safety margin. Mirror's Kaggle's per-level termination on a per-env aggregate.
-- **OFFLINE mode.** `Arcade(operation_mode=OperationMode.OFFLINE, environments_dir=...)`. Scorecard counters in OFFLINE are decorative (Phase 0b S5), so we track actions/levels ourselves at the agent wrapper.
+- **OFFLINE mode.** `Arcade(operation_mode=OperationMode.OFFLINE, environments_dir=...)`. Scorecard counters in OFFLINE are decorative under THIS constructor path / `LocalEnvironmentWrapper` (Phase 0b S5; counters DO fire under env-var-driven `Arcade()` no-kwargs pattern — see validation-results.md Phase 1 Findings), so we track actions/levels ourselves at the agent wrapper.
 
 ### 2.5 Speed budget — <30 minutes end-to-end
 
@@ -417,7 +417,7 @@ Notable patterns:
 |---|---|---|
 | API key required | Reads from `ARC_API_KEY` env var | We must set `"noop"` before any `Arcade(...)` (S9) |
 | MAX_ACTIONS default 80 | Configurable per agent subclass | Set to `5 * sum(baseline_actions)` + safety margin |
-| OFFLINE scorecard counters | Bundle uses ONLINE for dev | We must track action/level counts ourselves at agent level (S5) |
+| OFFLINE scorecard counters | LocalEnvironmentWrapper path only (env-var Arcade() works — Phase 1) | We must track action/level counts ourselves at agent level (S5) |
 | First RESET in `arc.make()` is free | Built-in to `api.py:330` | We don't issue an explicit reset before the first step — `env.reset()` returns the initial obs already (the make-time reset is implicit) |
 
 ### 5.6 Phase 1 must replicate

@@ -759,3 +759,41 @@ Carry-forward rules from Phase 0a/0b plus the addendum:
 ---
 
 **Status: Phase 0b + 2026-05-27 addendum + Kaggle parity test all complete.** Two new submission-blocker findings logged (S9 anon-key fetch, S10 path corrections). No outstanding empirical blockers for Phase 0c. Awaiting Phase 0c kickoff.
+
+---
+
+## Phase 1 Findings (2026-05-27)
+
+Empirical resolutions from the Kaggle S1 Save & Run (notebook `arc-agi-3-s1-plumbing`, artifact `harness_runs/kaggle_s1/s1_run_artifact.json`). Save & Run completed under internet-OFF using Jeroen Cottaar's canonical pattern (Topic 686416): branch on `KAGGLE_IS_COMPETITION_RERUN`, env-var-driven `Arcade()` (no kwargs). Not a leaderboard submission.
+
+### Issue 2 (RESET counter) — RESOLVED
+
+User-issued `env.step(RESET)` costs 1 action and increments BOTH `scorecard.actions` AND `scorecard.resets`. Resets are NOT subtracted from `actions`. The free-reset carve-out at `arc_agi/api.py:330` applies ONLY to the implicit reset inside `arc.make()`, never to user-issued resets. Evidence: per-env counter match across all 25/25 envs (local `actions_taken` == `scorecard.actions`; local `reset_count` == `scorecard.resets`).
+
+### Issue 3 (ACTION7 cost) — RESOLVED
+
+ACTION7 costs 1 action like every other action. No double-count, no waiver. Evidence: sk48 (local a7=333 / total=2000), bp35 (483/2000), su15 (962/1855) — all match `scorecard.actions` 1:1.
+
+### S5 revision — OFFLINE counters DO fire under env-var Arcade()
+
+The Phase 0b §S5 finding ("OFFLINE scorecard counters are decorative") applies ONLY to the `Arcade(operation_mode=OperationMode.OFFLINE, ...)` + `LocalEnvironmentWrapper.step()` code path that the local harness uses. The Kaggle submission pattern — env-var-driven `Arcade()` (no kwargs) with `OPERATION_MODE=offline` in `.env` — produces a DIFFERENT code path where counters fire correctly even in OFFLINE mode. Both paths exist in `arc_agi` 0.9.8; behavior differs by which constructor branch is taken.
+
+**Operational consequence**:
+- Local harness MUST continue tracking actions/levels at the agent-wrapper layer (its code path still has the decorative-counters behavior).
+- Kaggle submission notebook gets free scorecard counter accuracy via `arcade.get_scorecard()` after the run — used as cross-check against agent-tracked counts.
+- Do NOT delete the original §S5 finding — it remains true for the wrapper path our harness exercises.
+
+### S1 Save & Run baseline — 0.0581 / 25 public envs
+
+Biased-random with click-on-nonbg-cells over the 25 public envs scored:
+- **Total: 0.0581** (0–115 Kaggle LB scale; raw `scorecard.score`).
+- **Top envs**: r11l 0.852, sk48 0.276, tn36 0.272.
+- **Mid envs**: lp85, sp80, vc33, ls20 in 0.001–0.1 range.
+- **Zero envs**: 18 of 25.
+- **Levels reached**: 7 envs reached level ≥ 1.
+
+This is the empirical floor for the random-policy class. Not a leaderboard submission per gate discipline (see CLAUDE.md §1.2; user declined exemption for plumbing-validation).
+
+### S1 status
+
+Save & Run validated 2026-05-27 (score 0.0581); LB submission skipped per gate discipline; variance characterization (originally planned for S3) deferred to Phase 3 once a gate-qualifying agent exists.
