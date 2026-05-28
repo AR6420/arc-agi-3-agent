@@ -26,6 +26,9 @@ data/human_replays/
 # Generated NPZ datasets — regenerable from scripts/data_prep/replay_parser_v3.py
 data/bc_transitions*.npz
 data/bc_transitions*_meta.json
+data/bc_synth*.npz
+data/bc_synth*.json
+data/splits_cache.json
 data/synth_rollouts/
 
 # Weights / training runs / harness runs — large, regenerable

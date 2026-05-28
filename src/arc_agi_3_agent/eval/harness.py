@@ -136,7 +136,11 @@ def run_one_env(
         last_frame = _frame_last(obs.frame)
 
         t0 = time.perf_counter()
-        action_id, action_data = agent.choose_action(last_frame)
+        # Pass raw frame payload to non-random agents (they need T-stack for OQ7 reduce).
+        if isinstance(agent, BiasedRandomAgent):
+            action_id, action_data = agent.choose_action(last_frame)
+        else:
+            action_id, action_data = agent.choose_action(obs.frame)
         latencies.append(time.perf_counter() - t0)
 
         ga = GameAction.from_id(action_id)
@@ -210,6 +214,9 @@ def run_harness(env_dir: str, agent_name: str, out_dir: Path, run_id: int = 0) -
     arc = _get_arcade(env_dir)
     if agent_name == "random":
         agent = BiasedRandomAgent()
+    elif agent_name == "elite_v0":
+        from arc_agi_3_agent.agent.elite_v0 import EliteV0
+        agent = EliteV0()
     else:
         raise ValueError(f"Unknown agent: {agent_name}")
 
