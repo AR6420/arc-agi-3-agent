@@ -37,6 +37,7 @@ from arc_agi_3_agent.agents.random_agent import (
     max_actions_for_env,
     per_env_seed,
 )
+from arc_agi_3_agent.agent.discovery.agent import DiscoveryAgent
 from arc_agi_3_agent.eval.scoring import env_score_from_actions, total_score
 from arc_agi_3_agent.eval.splits import (
     ALL_PUBLIC_ENV_IDS,
@@ -82,6 +83,20 @@ def _frame_last(frame_payload: Any) -> np.ndarray:
     if arr.ndim == 3:
         return arr[-1].astype(np.int8)
     return arr.astype(np.int8)
+
+
+def dispatch_choose(agent, obs, last_frame):
+    """Route choose_action by agent type.
+
+    - BiasedRandomAgent: single (64,64) last frame.
+    - DiscoveryAgent: FULL obs (needs levels_completed / state / available_actions).
+    - others (EliteV0): raw obs.frame T-stack.
+    """
+    if isinstance(agent, BiasedRandomAgent):
+        return agent.choose_action(last_frame)
+    if isinstance(agent, DiscoveryAgent):
+        return agent.choose_action(obs)
+    return agent.choose_action(obs.frame)
 
 
 def run_one_env(
@@ -147,11 +162,7 @@ def run_one_env(
         last_frame = _frame_last(obs.frame)
 
         t0 = time.perf_counter()
-        # Pass raw frame payload to non-random agents (they need T-stack for OQ7 reduce).
-        if isinstance(agent, BiasedRandomAgent):
-            action_id, action_data = agent.choose_action(last_frame)
-        else:
-            action_id, action_data = agent.choose_action(obs.frame)
+        action_id, action_data = dispatch_choose(agent, obs, last_frame)
         latencies.append(time.perf_counter() - t0)
 
         ga = GameAction.from_id(action_id)
@@ -208,6 +219,10 @@ def run_one_env(
 
     score = env_score_from_actions(level_actions, baseline_actions, levels_completed_seen)
 
+    archetype_detected = None
+    if isinstance(agent, DiscoveryAgent):
+        archetype_detected = agent.wm.confirmed_archetype()
+
     # Cross-check vs OFFLINE scorecard (expected zeros per Phase 0b S5).
     sc_actions = sc_resets = 0
     if sc and sc.environments:
@@ -230,6 +245,7 @@ def run_one_env(
         "early_exit_reason": early_exit_reason,
         "scorecard_actions_offline": sc_actions,
         "scorecard_resets_offline": sc_resets,
+        "archetype_detected": archetype_detected,
     }
 
 
@@ -245,6 +261,14 @@ def run_harness(env_dir: str, agent_name: str, out_dir: Path, run_id: int = 0) -
     elif agent_name == "elite_v0":
         from arc_agi_3_agent.agent.elite_v0 import EliteV0
         agent = EliteV0()
+    elif agent_name == "discovery_explore_only":
+        agent = DiscoveryAgent(explore_only=True)
+    elif agent_name == "discovery" or agent_name.startswith("discovery:"):
+        # "discovery" = all strategies; "discovery:resource,movement" = staged subset.
+        enabled = None
+        if ":" in agent_name:
+            enabled = [s for s in agent_name.split(":", 1)[1].split(",") if s]
+        agent = DiscoveryAgent(enabled_strategies=enabled)
     else:
         raise ValueError(f"Unknown agent: {agent_name}")
 
