@@ -46,11 +46,13 @@ Cross-cutting archetypes (4, 7, 8) layer ON TOP of the primary archetype of an e
 
 **Detection.**
 - *Static (candidate):* a target/template sprite the entity resembles; palette/rotate/scale UI; transformer cells; result-canvas; goal sprites with encoded constraint patterns. Could be inert until interaction proves them live.
-- *Experiment (confirm):* (1) **Mutation** — interact with a candidate transformer and confirm the controlled entity's RENDERED attribute changes (recolor/shape-swap/rotate/scale) while position may stay fixed; repeat to learn the CYCLE length (color mod-4, shape mod-6/7, rotation mod-4). (2) **Target** — drive one axis toward the candidate target, watch for partial progress (highlight/flash/life-loss/no-op). (3) **Win** — advance fires when ALL axes equal target. Defining delta: an action changes an *attribute* not a *position*, and *equality-to-target* not *cell-occupancy* triggers advance.
+- *Experiment (confirm):* (1) **Mutation** — interact with a candidate transformer and confirm the controlled entity's RENDERED attribute changes (recolor/shape-swap/rotate/scale) while position may stay fixed; repeat to learn the CYCLE length (color mod-4, shape mod-6/7, rotation mod-4). **Transformers may be NON-SPATIAL** (ar25 class): the trigger can be an *action type* (selection-cycle, click) or a *state transition* (distance-delta to a target), not a cell you step on. Probe both: does any entity attribute change as a consequence of a selection/click action independent of spatial position? If so, the trigger is the action, not a cell. (2) **Target** — drive one axis toward the candidate target, watch for partial progress (highlight/flash/life-loss/no-op). (3) **Win** — advance fires when ALL axes equal target. Defining delta: an action changes an *attribute* not a *position*, and *equality-to-target* not *cell-occupancy* triggers advance.
 
 **Exploit.** Single-axis probe each transformer (which axis it increments, cycle length). Read target tuple from its sprite. Small search over transformer applications to reach the target tuple respecting cycle modularity, then commit. Canvas/paint variants (cd82, re86): learn which direction/color marks which region, compose the fill. **Decouple axes — never co-vary two until each is mapped.** Treat wrong-match penalty as expensive: simulate the tuple before committing.
+- *Constraint-template sub-path (ft09 class):* the target is not a fixed tuple but a *per-instance rule* encoded in the goal sprite's own pixels (e.g. each of 8 neighbor positions flagged "must-equal" vs "must-differ" by that sprite's pixel value at that offset). Exploit: **read the goal sprite's pixel pattern once at episode start to decode the constraint polarity** — this is a static pixel read (pixel-observable, not an action-delta), a legitimate one-time perception step — then drive neighbors to satisfy it. Without decoding polarity the agent cannot tell match from mismatch and will misfire.
+- *Rule-induction sub-path (tr87 class) — anti-blowup:* when win depends on a learned left→right *sequence* mapping, brute force is `K^L` (≈7^5) and busts the budget. **Exploit per-position independence: probe each output position separately** (vary one position, hold others, read the partial win/no-op signal) → ~log₂(K) probes per position → ≤~15 actions for L=5 instead of thousands. If the env couples positions (no per-position signal), flag tr87-class as needing a dedicated rule-learning sub-module rather than blind search.
 
-**Exemplars (train):** ls20, ar25, cn04, cd82, re86, tr87, s5i5, sb26, ft09, sc25. **Holdout:** sk48 (mixed, partial) — *provisional*.
+**Exemplars (train):** ls20, ar25, cn04, cd82, re86, tr87, r11l, s5i5, sb26, ft09, sc25. **Holdout:** sk48 (mixed, partial) — *provisional*.
 
 **Failure risks.** Combinatorial blow-up if axes co-mutated (tn36 4-attr; tr87 rule-induction). Implicit transformers (ar25: rotation triggered by DISTANCE-delta to a target, not a cell) easy to miss — cue is an unrelated sprite rotating when you moved. Mismatch still costs budget/lives (sb26, ls20). Constraint-template envs (ft09: per-neighbor match/mismatch) require inferring a per-instance rule, not a fixed target. Rule-induction (tr87: learn a left→right mapping before any match) is the deepest sub-case.
 
@@ -61,12 +63,13 @@ Cross-cutting archetypes (4, 7, 8) layer ON TOP of the primary archetype of an e
 **Description.** Primary control is ACTION6 (click x,y); effect is conditional on the sprite/region under the cursor. Different objects → qualitatively different mutations (toggle block, flip gravity, spawn clones, rotate/scale a color-family, place/merge a piece, select-then-move, run a program animation). The puzzle is discovering the click→effect map per object class, not navigation.
 
 **Detection.**
-- *Static (candidate):* metadata tag `click`; `available_actions == [6]`; button-like UI / color selectors / slot grids; no avatar moving under ACTION1–4.
+- *Static (candidate):* button-like UI / color selectors / slot grids; no avatar moving under ACTION1–4. Plus the action-space hint `available_actions == [6]` — note this is a *pre-experiment action-space* signal, NOT a pixel-visible appearance, and is still only a candidate: ACTION6 also appears as a secondary input in non-click-primary envs (cd82 compass-select, ar25 piece-select). Never short-circuit to `click_to_effect` from `available_actions` alone; confirm the experiment signal.
 - *Experiment (confirm):* click empty space vs distinct sprites, compare deltas. Confirm (a) ACTION1–4 produce no avatar translation / are unavailable, while (b) ACTION6 at DIFFERENT coords yields DIFFERENT sprite-dependent changes. Background click is often no-op / special gate animation. Signature: **effect is a function of the under-cursor sprite**, and repeated clicks on a toggle oscillate A→B→A.
 
 **Exploit.** Build a **click-affordance map**: probe one representative click per visually-distinct sprite *class*, record its delta (toggle/spawn/select/place/transform/no-op). Identify which class advances the win-check. Two-phase objects: learn click-to-select then click/arrow-to-place. **Cluster clickable cells by under-cursor color/class to predict effect WITHOUT re-probing every pixel — this is the explicit fix for the BC spatial-head failure (memorized absolute pixels → 0.000 holdout).**
+- *Place-to-satisfy-constraint sub-path (r11l class):* some click envs are not toggle/spawn but **click a piece from a supply → place it at a target → check a neighbor/connectivity constraint**. Exploit: enumerate supply pieces, probe place→delta, read whether the placement advanced the win-check or was a no-op; treat the target's rendered neighbor pattern as the constraint to satisfy (overlaps with attribute_matching's constraint-template read below). Click-affordance map must include a "place" effect class, not just toggle/select.
 
-**Exemplars (train):** bp35, lf52, s5i5, su15, tn36. **Holdout:** vc33 (pure_click), lp85 (mixed) — *provisional*.
+**Exemplars (train):** bp35, lf52, r11l, s5i5, su15, tn36. **Holdout:** vc33 (pure_click), lp85 (mixed) — *provisional*.
 
 **Failure risks.** **The dominant historical failure:** BC spatial head memorized absolute pixels → vc33 sp5=0.008. MUST click by salience/under-cursor-class, never learned coordinate. Effects can be multi-frame animations — read delta only after animation settles. Some clicks silently revert on overlap (s5i5): immediate post-click frame misleads. Approx-click tolerance (±1–3 px) sometimes only moves a cosmetic cursor highlight (diff=1) not structural progress — distinguish cosmetic from structural deltas.
 
@@ -181,17 +184,23 @@ ls20 is the canonical attribute_matching env. The agent must **DISCOVER** (never
 
 ---
 
-## Critic verdict (self-run — workflow critic agent failed on output; checks re-run inline)
+## Critic verdict (independent adversarial agent — relaunched after workflow tail failed)
 
-| check | result |
-|---|---|
-| Coverage — all 20 train envs assigned, no forced fits | **PASS** |
-| Appearance-leak — any signature relying on static appearance | **PASS** (every archetype flags static as candidate-only + distinct experiment signature) |
-| Holdout-leak — taxonomy derived from holdout internals | **PASS** (only 20 train sources read; holdout placement = surface metadata, provisional) |
-| ls20-encode-risk — attribute_matching smuggling ls20 specifics | **PASS** (generic; ls20 is exemplar only; answer-key held outside) |
-| Missing archetypes | **PASS** (4 required + 4 emergent cover all reader mechanics) |
+The workflow's critic agent failed on structured output, so it was relaunched standalone against the committed doc. It found **one P0 my inline self-check missed** + three exploit-path gaps, all now fixed in this revision.
 
-**Overall: PASS.** Taxonomy is experiment-grounded, discover-then-exploit, no per-env hardcoding, holdout-clean.
+| check | initial | after revision |
+|---|---|---|
+| Coverage — all 20 train envs assigned | **FAIL** — r11l absent from every exemplar list (its reader's `env` field was a description, not "r11l", so it dropped out of the doc) | **PASS** — r11l added to click_to_effect (primary) + attribute_matching (secondary) |
+| Appearance-leak | PASS (minor: `available_actions` is action-space, not appearance) | **PASS** — clarified in click_to_effect detection |
+| Holdout-leak | **PASS** (only 20 train sources read; holdout provisional) | **PASS** |
+| ls20-encode-risk | **PASS** (generic; answer-key held outside) | **PASS** |
+| Missing archetype | **FAIL (P1)** — r11l place-to-satisfy-constraint exploit uncovered | **PASS** — place-to-constraint sub-path added |
+| Build-order sanity | PASS | **PASS** |
+| Discovery-feasibility (per archetype, observable from frame+levels only) | 6/8 clean; **P1** tr87 rule-induction (7^L blowup) + ft09 constraint read underdocumented; **P2** ar25 non-spatial transformer | **PASS** — tr87 per-position anti-blowup, ft09 static constraint read, ar25 non-spatial transformer all added to attribute_matching |
+
+**Revisions applied (P0→P2):** r11l coverage; click `available_actions` clarification + place-to-constraint sub-path; attribute_matching non-spatial transformer probe; ft09 constraint-template static read; tr87 per-position rule-induction anti-blowup.
+
+**Overall after revision: PASS.** Experiment-grounded, discover-then-exploit, no per-env hardcoding, holdout-clean, all 20 train envs covered, every experiment signal observable from (64×64 frame stack + levels_completed) alone. One residual flag carried into Part 2: tr87-class rule-induction may still need a dedicated sub-module if a per-position win signal proves unavailable — to be confirmed empirically, not assumed.
 
 ---
 
