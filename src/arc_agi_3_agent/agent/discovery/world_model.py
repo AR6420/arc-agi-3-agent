@@ -64,12 +64,16 @@ class WorldModel:
         self.confirmed_archetype_name: str | None = None
         self._reward_cells: list[tuple[int, int]] = []
         self.reward_click_classes: set[tuple[int, int]] = set()
+        self.tried_goal_keys: set[tuple[int, int]] = set()    # salient candidates reached w/o reward
+        self.lethal: set[tuple[int, int | None]] = set()      # (action_id, click_class|None) -> avoid
+        self._terminal_seen = False
 
     def _partial_reset_on_level(self) -> None:
         # New level: occupancy/objects/strides change; keep effects keyed by shape_sig.
         self.prev_objs = []
         self.cur_objs = []
         self._strip_state = {}
+        self.tried_goal_keys = set()        # fresh candidate goals for the new layout
 
     # ---- ingest ----------------------------------------------------------
     def observe(self, obs) -> None:
@@ -94,6 +98,7 @@ class WorldModel:
             self._update_resources(self.last_action, af)
             self._update_goal(levels_delta, cur_objs)
             self._record_click_reward(delta)
+            self._record_lethal(af)
             # fill the previous memory step's observed effect
             if self.memory:
                 self.memory[-1].observed_delta = delta
@@ -244,6 +249,23 @@ class WorldModel:
     def rewarding_click_classes(self) -> set[tuple[int, int]]:
         return set(self.reward_click_classes)
 
+    def _click_class_at(self, xy: tuple[int, int]) -> tuple[int, int] | None:
+        x, y = xy
+        for o in self.prev_objs:
+            r0, c0, r1, c1 = o.bbox
+            if r0 <= y <= r1 and c0 <= x <= c1 and o.mask[y - r0, x - c0]:
+                return o.class_key
+        return None
+
+    def _record_lethal(self, af) -> None:
+        if not af.state.endswith("GAME_OVER"):
+            return
+        cls = self._click_class_at(self.last_click) if (self.last_action == 6 and self.last_click) else None
+        self.lethal.add((self.last_action, cls))
+
+    def is_lethal(self, action_id: int, click_class: tuple[int, int] | None = None) -> bool:
+        return (action_id, click_class) in self.lethal or (action_id, None) in self.lethal
+
     def _update_goal(self, levels_delta: int, cur_objs) -> None:
         if levels_delta > 0:
             # the controllable's attribute tuple at success is a candidate target
@@ -261,6 +283,19 @@ class WorldModel:
 
     def objects(self) -> list[Object]:
         return list(self.cur_objs)
+
+    def object_by_id(self, obj_id: int) -> Object | None:
+        for o in self.cur_objs:
+            if o.id == obj_id:
+                return o
+        return None
+
+    def mark_goal_tried(self, class_key: tuple[int, int]) -> None:
+        self.tried_goal_keys.add(class_key)
+
+    def salient_candidates(self):
+        from .saliency import rank_saliency
+        return rank_saliency(self.cur_objs, exclude_sig=self.controllable_sig)
 
     def object_classes(self) -> dict[tuple[int, int], list[int]]:
         out: dict[tuple[int, int], list[int]] = {}

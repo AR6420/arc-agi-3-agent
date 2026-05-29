@@ -11,7 +11,10 @@ W_UNKNOWN = 3.0
 W_NOVEL = 1.0
 W_NOOP = 4.0
 W_CLICKINFO = 1.5
+W_LETHAL = 100.0         # avoid actions/classes known to end the episode
 N_RANDOM_CLICKS = 6      # extra exploratory click samples when ACTION6 available
+COMMIT_STEP = 60         # Task 4: after this many actions, stop chasing unknown effects
+                         # (hard explore->commit switch; tuned on train envs only)
 
 
 class DecisionRule:
@@ -55,6 +58,10 @@ class DecisionRule:
         noop = wm.known_noop_actions()
         pressure = ResourceTracker.pressure(wm)
         boost = 1.0 - pressure
+        # Task 4 hard commit switch: after COMMIT_STEP actions stop paying to probe
+        # UNKNOWN effects (the wandering cost). Click information is NOT suppressed —
+        # click envs must keep clicking to find a rewarding class.
+        unknown_boost = 0.0 if wm.step_index() > COMMIT_STEP else boost
 
         candidates: list[tuple[float, int, dict]] = []
         for a in opts.action_ids:
@@ -62,15 +69,22 @@ class DecisionRule:
                 continue
             score = float(self.rng.random())
             if a in unknown:
-                score += W_UNKNOWN * boost
+                score += W_UNKNOWN * unknown_boost
             if a in noop:
                 score -= W_NOOP
+            if wm.is_lethal(a, None):
+                score -= W_LETHAL
             candidates.append((score, a, {}))
 
         if ACTION6 in opts.action_ids:
-            click_xys = [ct.xy for ct in opts.click_targets]
-            click_xys += self._random_clicks(wm)
-            for (x, y) in click_xys:
+            for ct in opts.click_targets:
+                score = float(self.rng.random()) + W_CLICKINFO * boost
+                if ACTION6 in noop:
+                    score -= W_NOOP
+                if wm.is_lethal(ACTION6, ct.class_key):
+                    score -= W_LETHAL
+                candidates.append((score, ACTION6, {"x": int(ct.xy[0]), "y": int(ct.xy[1])}))
+            for (x, y) in self._random_clicks(wm):
                 score = float(self.rng.random()) + W_CLICKINFO * boost
                 if ACTION6 in noop:
                     score -= W_NOOP

@@ -8,6 +8,7 @@ import numpy as np
 
 from ...data.perception_input import reduce_frame_stack
 from .novelty import coarse_signature, frame_hash
+from .saliency import active_region
 from .segmentation import flood_fill_components
 from .structure import strip_extents, symmetry_flags
 from .types import Object
@@ -26,6 +27,7 @@ class AnalysedFrame:
     state: str
     strip_extents: dict[str, int]
     symmetry: dict[str, bool]
+    active_region: tuple[int, int, int, int]
 
     @property
     def motion_cells(self) -> int:
@@ -54,4 +56,5 @@ def analyse(
         state=str(state),
         strip_extents=strip_extents(grid),
         symmetry=symmetry_flags(grid),
+        active_region=active_region(grid),
     )
