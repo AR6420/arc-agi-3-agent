@@ -15,7 +15,8 @@ from pathlib import Path
 os.environ.setdefault("ARC_API_KEY", "noop")
 
 from arc_agi_3_agent.agent.discovery.agent import DiscoveryAgent
-from arc_agi_3_agent.eval.harness import DEFAULT_ENV_DIR, _frame_last, _get_arcade, dispatch_choose
+from arc_agi_3_agent.agents.random_agent import max_actions_for_env
+from arc_agi_3_agent.eval.harness import DEFAULT_ENV_DIR, _get_arcade, _run_episode
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -32,24 +33,22 @@ LS20_KEY = {
 }
 
 
-def run_ls20(budget: int = 1500, run_id: int = 0):
+def run_ls20(budget: int | None = None, run_id: int = 0, goal_by_interaction: bool = True):
+    """Run the discovery agent on ls20 under the FIXED RESET-and-continue harness loop
+    (death is non-terminal — death-model.md Verdict C) so the agent gets its full
+    5×Σbaseline budget of retries to re-derive ls20's mechanics. Returns the world model."""
     from arcengine import GameAction
     arc = _get_arcade(DEFAULT_ENV_DIR)
     by_base = {e.game_id.split("-")[0]: e for e in arc.get_environments()}
     info = by_base["ls20"]
+    baseline = list(info.baseline_actions or [])
+    max_actions = budget if budget is not None else (max_actions_for_env(baseline) if baseline else 1500)
     card = arc.open_scorecard(tags=["ls20_recovery"])
     env = arc.make(info.game_id, scorecard_id=card)
     obs = env.reset()
-    agent = DiscoveryAgent()
+    agent = DiscoveryAgent(goal_by_interaction=goal_by_interaction)
     agent.reset_for_env(info.game_id, list(obs.available_actions or []), run_id=run_id)
-    for _ in range(budget):
-        st = str(obs.state)
-        if st.endswith("WIN") or st.endswith("GAME_OVER"):
-            break
-        a, d = dispatch_choose(agent, obs, _frame_last(obs.frame))
-        obs = env.step(GameAction.from_id(a), data=d)
-        if obs is None:
-            break
+    _run_episode(env, agent, obs, baseline, max_actions, GameAction)
     arc.close_scorecard(card)
     return agent.wm
 
@@ -74,7 +73,7 @@ def grade(wm) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--budget", type=int, default=1500)
+    ap.add_argument("--budget", type=int, default=None, help="default: full 5×Σbaseline")
     ap.add_argument("--run-id", type=int, default=0)
     ap.add_argument("--output", default=str(REPO_ROOT / "harness_runs" / "p3_ls20_recovery"))
     args = ap.parse_args()

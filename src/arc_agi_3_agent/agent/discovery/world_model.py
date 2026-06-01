@@ -67,6 +67,12 @@ class WorldModel:
         self.tried_goal_keys: set[tuple[int, int]] = set()    # salient candidates reached w/o reward
         self.lethal: set[tuple[int, int | None]] = set()      # (action_id, click_class|None) -> avoid
         self._terminal_seen = False
+        # Phase 3 v2 (B3/B4) — life model learned by observation (never per-env hardcoded).
+        self.n_deaths = 0                                     # GAME_OVER events this episode
+        self.n_revives = 0                                    # RESET-revivals this episode
+        self.death_steps: list[int] = []                     # step_idx at each death
+        self._lethal_cells: set[tuple[int, int]] = set()     # board cells that killed the controllable (this level)
+        self.resource_at_death: list[dict[str, int]] = []    # strip extents observed at each death
 
     def _partial_reset_on_level(self) -> None:
         # New level: occupancy/objects/strides change; keep effects keyed by shape_sig.
@@ -74,6 +80,7 @@ class WorldModel:
         self.cur_objs = []
         self._strip_state = {}
         self.tried_goal_keys = set()        # fresh candidate goals for the new layout
+        self._lethal_cells = set()          # hazards are layout-specific; stale on a new level
 
     # ---- ingest ----------------------------------------------------------
     def observe(self, obs) -> None:
@@ -89,7 +96,20 @@ class WorldModel:
 
         levels_delta = af.levels_completed - self.prev_levels
 
-        if self.prev_af is not None and self.last_action >= 0:
+        prev_state = self.prev_af.state if self.prev_af is not None else ""
+        died = af.state.endswith("GAME_OVER")
+        # A revival is a layout discontinuity: RESET reloads the level (level_reset) so the
+        # frame jumps back to the level start. Attributing that jump as an action effect
+        # would poison the model — so we skip delta attribution and keep the learned model.
+        revived = (self.last_action == 0) or (prev_state.endswith("GAME_OVER") and not died)
+
+        if died:
+            # Terminal observe: learn lethality + life model. The death frame is not a
+            # normal effect, so DON'T attribute moves/transformers/effects to last_action.
+            self._record_death(af)
+        elif revived:
+            self._on_revive()
+        elif self.prev_af is not None and self.last_action >= 0:
             delta = diff_frames(self.prev_objs, cur_objs, self.prev_af.grid, af.grid,
                                 levels_delta, motion_cells=af.motion_cells)
             self._update_effect(self.last_action, delta)
@@ -98,13 +118,15 @@ class WorldModel:
             self._update_resources(self.last_action, af)
             self._update_goal(levels_delta, cur_objs)
             self._record_click_reward(delta)
-            self._record_lethal(af)
             # fill the previous memory step's observed effect
             if self.memory:
                 self.memory[-1].observed_delta = delta
 
         if levels_delta > 0:
             self._partial_reset_on_level()
+            cur_objs, self._next_obj_id = stable_object_ids([], af.objects4, self._next_obj_id)
+        elif revived:
+            # fresh object ids after the layout jump (don't match across the discontinuity)
             cur_objs, self._next_obj_id = stable_object_ids([], af.objects4, self._next_obj_id)
 
         self.prev_af = af
@@ -257,14 +279,58 @@ class WorldModel:
                 return o.class_key
         return None
 
-    def _record_lethal(self, af) -> None:
-        if not af.state.endswith("GAME_OVER"):
-            return
-        cls = self._click_class_at(self.last_click) if (self.last_action == 6 and self.last_click) else None
-        self.lethal.add((self.last_action, cls))
+    def _prev_controllable_centroid(self) -> tuple[float, float] | None:
+        if self.controllable_sig is None:
+            return None
+        cands = [o for o in self.prev_objs if o.shape_sig == self.controllable_sig]
+        if not cands:
+            return None
+        return min(cands, key=lambda o: o.size).centroid
+
+    def _record_death(self, af) -> None:
+        """Learn lethality + life model from an observed GAME_OVER (B3).
+
+        Lethality is learned generically: a click death blames the (ACTION6, class); a
+        directional death blames the CELL the controllable moved into (a positional hazard)
+        rather than the whole direction — blanket-marking a move action lethal would freeze
+        movement. Nothing about any specific env is assumed.
+        """
+        self.n_deaths += 1
+        self.death_steps.append(self.step_idx)
+        if self.prev_af is not None:
+            self.resource_at_death.append(dict(self.prev_af.strip_extents))
+
+        if self.last_action in DIRECTIONAL and self.last_action in self.move_vectors:
+            pc = self._prev_controllable_centroid()
+            if pc is not None:
+                dy, dx = self.move_vectors[self.last_action]
+                cell = (int(round(pc[0])) + dy, int(round(pc[1])) + dx)
+                if 0 <= cell[0] < GRID and 0 <= cell[1] < GRID:
+                    self._lethal_cells.add(cell)
+        else:
+            cls = self._click_class_at(self.last_click) if (self.last_action == 6 and self.last_click) else None
+            self.lethal.add((self.last_action, cls))
+
+    def _on_revive(self) -> None:
+        """RESET revived the level (death-model.md Verdict C). Reset layout-specific state
+        but KEEP the learned model (effects/controllable/move_vectors/goal/reward/lethal/
+        lethal_cells) so the retry is smarter than the first attempt (B4)."""
+        self.n_revives += 1
+        self._strip_state = {}
+        self.tried_goal_keys = set()
 
     def is_lethal(self, action_id: int, click_class: tuple[int, int] | None = None) -> bool:
         return (action_id, click_class) in self.lethal or (action_id, None) in self.lethal
+
+    def lethal_cells(self) -> set[tuple[int, int]]:
+        """Board cells where the controllable died on this level (avoid on retry)."""
+        return set(self._lethal_cells)
+
+    def mean_actions_per_life(self) -> float | None:
+        """Learned 'how long a life lasts' = actions per death so far (B3 life estimate)."""
+        if self.n_deaths <= 0:
+            return None
+        return self.step_idx / self.n_deaths
 
     def _update_goal(self, levels_delta: int, cur_objs) -> None:
         if levels_delta > 0:
@@ -405,4 +471,9 @@ class WorldModel:
             ],
             "reward_events": sum(e.levels_delta_count for e in self.effects.values()),
             "confirmed_archetype": self.confirmed_archetype_name,
+            "n_deaths": self.n_deaths,
+            "n_revives": self.n_revives,
+            "mean_actions_per_life": self.mean_actions_per_life(),
+            "n_lethal_actions": len(self.lethal),
+            "n_lethal_cells": len(self._lethal_cells),
         }

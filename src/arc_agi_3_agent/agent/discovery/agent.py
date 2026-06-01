@@ -19,16 +19,29 @@ AGENT_VERSION = "discovery_v0"
 
 
 def per_env_seed(env_id: str, run_id: int = 0) -> int:
-    return hash((env_id, run_id, AGENT_VERSION)) & 0xFFFFFFFF
+    # Phase 3 v2 fix: process-stable seed (builtin hash() is per-process salted).
+    from arc_agi_3_agent.seeding import stable_seed
+    return stable_seed(env_id, run_id, AGENT_VERSION)
 
 
 class DiscoveryAgent:
-    def __init__(self, *, explore_only: bool = False, enabled_strategies: list[str] | None = None) -> None:
+    def __init__(self, *, explore_only: bool = False, enabled_strategies: list[str] | None = None,
+                 goal_by_interaction: bool = False, relational_explore: bool = False) -> None:
         self.explore_only = explore_only
-        self.enabled_strategies = enabled_strategies if enabled_strategies is not None else list(BUILD_ORDER)
+        self.goal_by_interaction = goal_by_interaction
+        self.relational_explore = relational_explore
+        if enabled_strategies is not None:
+            self.enabled_strategies = enabled_strategies
+        else:
+            self.enabled_strategies = list(BUILD_ORDER)
+            # Task C (aggressive ablation): GoalProbe as a dedicated probing strategy.
+            if goal_by_interaction and "goal_probe" not in self.enabled_strategies:
+                self.enabled_strategies.append("goal_probe")
         self.wm = WorldModel()
         self.strategies = build_strategies(self.enabled_strategies)
-        self.decider = DecisionRule(self.strategies, explore_only=explore_only)
+        # Task C (best-of-both): relational bias on exploration, not a monopolising strategy.
+        self.decider = DecisionRule(self.strategies, explore_only=explore_only,
+                                    relational_explore=relational_explore)
         self.rng: random.Random | None = None
         self.np_rng: np.random.Generator | None = None
         self.env_id: str | None = None

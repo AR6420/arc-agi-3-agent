@@ -24,8 +24,14 @@ AGENT_VERSION = "random_agent_v1"
 
 
 def per_env_seed(env_id: str, run_id: int = 0) -> int:
-    """Deterministic per-env seed per Phase 0c §3.2 spec."""
-    return hash((env_id, run_id, AGENT_VERSION)) & 0xFFFFFFFF
+    """Deterministic per-env seed per Phase 0c §3.2 spec.
+
+    Phase 3 v2 fix: builtin hash() is per-process salted, so the old
+    `hash((env_id, run_id, AGENT_VERSION)) & 0xFFFFFFFF` drew a different seed every
+    process launch (measurements were not reproducible). blake2b is process-stable.
+    """
+    from arc_agi_3_agent.seeding import stable_seed
+    return stable_seed(env_id, run_id, AGENT_VERSION)
 
 
 class BiasedRandomAgent:

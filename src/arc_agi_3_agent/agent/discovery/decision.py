@@ -17,10 +17,20 @@ COMMIT_STEP = 60         # Task 4: after this many actions, stop chasing unknown
                          # (hard explore->commit switch; tuned on train envs only)
 
 
+W_RELATIONAL = 1.2       # Task C: bias explore clicks toward relational-ranked candidates
+
+
 class DecisionRule:
-    def __init__(self, strategies, explore_only: bool = False) -> None:
+    def __init__(self, strategies, explore_only: bool = False,
+                 relational_explore: bool = False) -> None:
         self.strategies = strategies           # priority-sorted
         self.explore_only = explore_only
+        # Task C (best-of-both): make goal-inference-by-interaction a BIAS on exploration
+        # rather than a monopolising strategy. Explore still samples every action/click, but
+        # click targets that rank high on relational goal-likeness get a decaying bonus, so
+        # the rewarding class is probed sooner WITHOUT starving the pickup->place sequences
+        # other click envs (e.g. r11l) need. Complements, never replaces.
+        self.relational_explore = relational_explore
         self.rng: np.random.Generator | None = None
         self._recent_keys: list[int] = []
         self._last_action: int = -1
@@ -31,6 +41,14 @@ class DecisionRule:
         self._last_action = -1
 
     def step(self, wm) -> tuple[int, dict]:
+        # Death is non-terminal (death-model.md Verdict C): on GAME_OVER the only action
+        # that un-freezes the env is RESET (level_reset -> revive). Self-drive it so the
+        # world model records a consistent RESET decision (the retry keeps the learned
+        # model via _on_revive). Mirrors the canonical agent loop.
+        if wm.cur_af is not None and str(wm.cur_af.state).endswith("GAME_OVER"):
+            self._last_action = 0
+            return 0, {}
+
         key = wm.state_key()
         self._recent_keys.append(key)
         if len(self._recent_keys) > STUCK_K:
@@ -77,12 +95,15 @@ class DecisionRule:
             candidates.append((score, a, {}))
 
         if ACTION6 in opts.action_ids:
+            rel_rank = self._relational_rank(wm) if self.relational_explore else {}
             for ct in opts.click_targets:
                 score = float(self.rng.random()) + W_CLICKINFO * boost
                 if ACTION6 in noop:
                     score -= W_NOOP
                 if wm.is_lethal(ACTION6, ct.class_key):
                     score -= W_LETHAL
+                if ct.class_key in rel_rank:
+                    score += W_RELATIONAL / (1.0 + rel_rank[ct.class_key])   # decaying by rank
                 candidates.append((score, ACTION6, {"x": int(ct.xy[0]), "y": int(ct.xy[1])}))
             for (x, y) in self._random_clicks(wm):
                 score = float(self.rng.random()) + W_CLICKINFO * boost
@@ -97,6 +118,17 @@ class DecisionRule:
         _, aid, data = candidates[0]
         self._last_action = aid
         return aid, data
+
+    def _relational_rank(self, wm) -> dict[tuple[int, int], int]:
+        """class_key -> rank (0 = most goal-like) by relational features (Task C)."""
+        if wm.cur_af is None:
+            return {}
+        from .interaction import rank_candidates_relational
+        cands = rank_candidates_relational(wm.objects(), wm.controllable_obj(), wm.cur_af.active_region)
+        rank: dict[tuple[int, int], int] = {}
+        for i, c in enumerate(cands):
+            rank.setdefault(c.class_key, i)
+        return rank
 
     def _random_clicks(self, wm) -> list[tuple[int, int]]:
         if wm.cur_af is None:

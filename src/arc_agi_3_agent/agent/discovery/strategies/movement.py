@@ -33,6 +33,14 @@ class MovementPathfinding:
             return None
         start = (int(round(ctrl.centroid[0])), int(round(ctrl.centroid[1])))
         occ = wm.occupancy()
+        # B4 retry-smarter: route around cells that killed the controllable on this level
+        # (level_reset reloads the same layout, so the hazard is in the same place).
+        lethal = wm.lethal_cells()
+        if lethal:
+            occ = occ.copy()
+            for (r, c) in lethal:
+                if (r, c) != start and 0 <= r < GRID and 0 <= c < GRID:
+                    occ[r, c] = True
 
         goal = wm.candidate_goal()
         if goal is not None and goal.kind == "reach_cell" and goal.cells:
