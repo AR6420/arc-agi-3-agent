@@ -17,28 +17,35 @@ COMMIT_STEP = 60         # Task 4: after this many actions, stop chasing unknown
                          # (hard explore->commit switch; tuned on train envs only)
 
 
-W_RELATIONAL = 1.2       # Task C: bias explore clicks toward relational-ranked candidates
+W_RELATIONAL = 1.2       # Task C: constant relational bonus (ablation; fixates -> breaks r11l)
+W_UNIFIED = 2.2          # v3: PEAK relational bonus for a fresh top candidate (decays per click)
 
 
 class DecisionRule:
     def __init__(self, strategies, explore_only: bool = False,
-                 relational_explore: bool = False) -> None:
+                 relational_explore: bool = False, unified: bool = False) -> None:
         self.strategies = strategies           # priority-sorted
         self.explore_only = explore_only
-        # Task C (best-of-both): make goal-inference-by-interaction a BIAS on exploration
-        # rather than a monopolising strategy. Explore still samples every action/click, but
-        # click targets that rank high on relational goal-likeness get a decaying bonus, so
-        # the rewarding class is probed sooner WITHOUT starving the pickup->place sequences
-        # other click envs (e.g. r11l) need. Complements, never replaces.
+        # Task C ablation: constant relational bonus (fixates on the top class -> starves the
+        # pickup->place sequences r11l needs). Kept only for comparison.
         self.relational_explore = relational_explore
+        # v3 UNIFIED goal inference: both signals live, reward arbitrates. Pre-reward, click
+        # exploration gets a relational bonus that DECAYS per-click-on-that-class — so each
+        # ranked candidate gets early attention (GoalProbe's strength) but the bonus backs off
+        # after a few clicks, returning variety so multi-step reward chains stay discoverable
+        # (B5's strength). After a click earns reward, ClickToEffect exploits it (reward
+        # arbitration). No style is locked in by a first guess or static appearance.
+        self.unified = unified
         self.rng: np.random.Generator | None = None
         self._recent_keys: list[int] = []
         self._last_action: int = -1
+        self._class_clicks: dict[tuple[int, int], int] = {}   # per-class click count (anti-fixation decay)
 
     def reset(self, rng: np.random.Generator) -> None:
         self.rng = rng
         self._recent_keys = []
         self._last_action = -1
+        self._class_clicks = {}
 
     def step(self, wm) -> tuple[int, dict]:
         # Death is non-terminal (death-model.md Verdict C): on GAME_OVER the only action
@@ -81,7 +88,8 @@ class DecisionRule:
         # click envs must keep clicking to find a rewarding class.
         unknown_boost = 0.0 if wm.step_index() > COMMIT_STEP else boost
 
-        candidates: list[tuple[float, int, dict]] = []
+        # candidate = (score, action_id, data, click_class_key | None)
+        candidates: list[tuple[float, int, dict, tuple[int, int] | None]] = []
         for a in opts.action_ids:
             if a == ACTION6:
                 continue
@@ -92,10 +100,15 @@ class DecisionRule:
                 score -= W_NOOP
             if wm.is_lethal(a, None):
                 score -= W_LETHAL
-            candidates.append((score, a, {}))
+            candidates.append((score, a, {}, None))
 
         if ACTION6 in opts.action_ids:
-            rel_rank = self._relational_rank(wm) if self.relational_explore else {}
+            # Reward arbitration: the relational nudge is only ON while still discovering
+            # (no rewarding click class confirmed yet). Once reward is observed, ClickToEffect
+            # (a higher-priority strategy) exploits it and the nudge stays out of the way.
+            has_click_reward = bool(wm.rewarding_click_classes())
+            use_relational = (self.unified or self.relational_explore) and not has_click_reward
+            rel_rank = self._relational_rank(wm) if use_relational else {}
             for ct in opts.click_targets:
                 score = float(self.rng.random()) + W_CLICKINFO * boost
                 if ACTION6 in noop:
@@ -103,20 +116,29 @@ class DecisionRule:
                 if wm.is_lethal(ACTION6, ct.class_key):
                     score -= W_LETHAL
                 if ct.class_key in rel_rank:
-                    score += W_RELATIONAL / (1.0 + rel_rank[ct.class_key])   # decaying by rank
-                candidates.append((score, ACTION6, {"x": int(ct.xy[0]), "y": int(ct.xy[1])}))
+                    rank = rel_rank[ct.class_key]
+                    if self.unified:
+                        # PEAK bonus for a fresh top candidate, DECAYING per click on that
+                        # class -> systematic early probing without permanent fixation.
+                        clicks = self._class_clicks.get(ct.class_key, 0)
+                        score += (W_UNIFIED / (1.0 + rank)) / (1.0 + clicks)
+                    else:
+                        score += W_RELATIONAL / (1.0 + rank)   # constant (ablation)
+                candidates.append((score, ACTION6, {"x": int(ct.xy[0]), "y": int(ct.xy[1])}, ct.class_key))
             for (x, y) in self._random_clicks(wm):
                 score = float(self.rng.random()) + W_CLICKINFO * boost
                 if ACTION6 in noop:
                     score -= W_NOOP
-                candidates.append((score, ACTION6, {"x": int(x), "y": int(y)}))
+                candidates.append((score, ACTION6, {"x": int(x), "y": int(y)}, None))
 
         if not candidates:
             self._last_action = 1
             return 1, {}
         candidates.sort(key=lambda t: -t[0])
-        _, aid, data = candidates[0]
+        _, aid, data, ck = candidates[0]
         self._last_action = aid
+        if ck is not None:                                  # decay this class's future bonus
+            self._class_clicks[ck] = self._class_clicks.get(ck, 0) + 1
         return aid, data
 
     def _relational_rank(self, wm) -> dict[tuple[int, int], int]:

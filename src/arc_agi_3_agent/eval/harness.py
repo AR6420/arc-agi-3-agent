@@ -324,7 +324,9 @@ def run_harness(env_dir: str, agent_name: str, out_dir: Path, run_id: int = 0) -
     elif agent_name == "discovery_goalprobe":
         agent = DiscoveryAgent(goal_by_interaction=True)   # Task C — aggressive ablation (GoalProbe strategy)
     elif agent_name == "discovery_relexplore":
-        agent = DiscoveryAgent(relational_explore=True)    # Task C — relational explore-bias (best-of-both)
+        agent = DiscoveryAgent(relational_explore=True)    # Task C — relational explore-bias (ablation)
+    elif agent_name == "discovery_unified":
+        agent = DiscoveryAgent(unified_goal=True)          # v3 — unified goal inference (submission candidate)
     elif agent_name == "discovery" or agent_name.startswith("discovery:"):
         # "discovery" = all strategies; "discovery:resource,movement" = staged subset.
         enabled = None
